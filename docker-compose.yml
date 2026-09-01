@@ -1,0 +1,52 @@
+# Single-VPS deployment: Postgres + the Payload app.
+# The app runs Payload's Jobs autoRun in-process (schedules the nightly DK sync
+# and processes inquiry jobs) — no separate worker needed at this scale.
+# To scale the workers out later, set DISABLE_AUTORUN=true on `app` and add a
+# `worker` service running:  pnpm payload jobs:run --cron "* * * * *" --all-queues --handle-schedules
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: payload
+      POSTGRES_PASSWORD: payload
+      POSTGRES_DB: payload_middleware
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U payload -d payload_middleware']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: node:22-alpine
+    restart: always
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Inside compose, reach Postgres by service name.
+      DATABASE_URL: postgresql://payload:payload@postgres:5432/payload_middleware
+    env_file:
+      - .env
+    ports:
+      - '3000:3000'
+    volumes:
+      - .:/app
+      - app_node_modules:/app/node_modules
+      - media:/app/media
+    command: >
+      sh -c "corepack enable &&
+             pnpm install --frozen-lockfile &&
+             pnpm payload migrate &&
+             pnpm build &&
+             pnpm start"
+
+volumes:
+  pgdata:
+  media:
+  app_node_modules:
