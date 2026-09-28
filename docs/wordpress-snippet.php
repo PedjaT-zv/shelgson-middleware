@@ -28,25 +28,45 @@ if (!function_exists('inquiry_send_to_payload')) {
         // src/endpoints/intake.ts.
         $payload = [
             'customer' => [
-                'name'  => $data['customer_name']  ?? '',
-                'email' => $data['customer_email'] ?? '',
-                'phone' => $data['customer_phone'] ?? '',
+                'firstName' => $data['customer_first_name'] ?? '',
+                'lastName'  => $data['customer_last_name']  ?? '',
+                'kennitala' => $data['customer_kennitala']  ?? '',
+                'address'   => $data['customer_address']    ?? '',
+                'phone'     => $data['customer_phone']      ?? '',
+                'email'     => $data['customer_email']      ?? '',
             ],
             'deceased' => [
-                'name'     => $data['deceased_name'] ?? '',
-                'bornDate' => $data['deceased_born'] ?? '',
-                'diedDate' => $data['deceased_died'] ?? '',
+                'firstName' => $data['deceased_first_name'] ?? '',
+                'lastName'  => $data['deceased_last_name']  ?? '',
+                'bornDate'  => $data['deceased_born'] ?? '', // yyyy-mm-dd or dd.mm.yy
+                'diedDate'  => $data['deceased_died'] ?? '',
             ],
-            // The DK ItemCode (vörunúmer) the customer chose:
+            // The tombstone (Steinn) — DK ItemCode / vörunúmer, e.g. "H111":
             'product' => [
                 'itemCode' => $data['product_item_code'] ?? '',
             ],
-            // One string per inscription line:
+            // Extra inscription lines. The deceased name and the "f.… d.…"
+            // dates line are generated automatically — do NOT repeat them here:
             'inscriptionLines' => array_values(array_filter($data['inscription_lines'] ?? [])),
-            // Material / add-on codes:
+            // Template selects (Icelandic values from the template option lists):
+            'options' => array_filter([
+                'letur'          => $data['letur']       ?? null, // font
+                'litur'          => $data['litur']       ?? null, // lettering colour
+                'stoneColor'     => $data['stone_color'] ?? null, // Glitir code (SB, BG, …)
+                'cemetery'       => $data['cemetery']    ?? null, // Kirkjugarður
+                'delivery'       => $data['delivery']    ?? null, // Afhending
+                'perCharPrice'   => isset($data['per_char_price']) ? (int) $data['per_char_price'] : null,
+                'solumadur'      => $data['solumadur']   ?? null,
+                'comments'       => $data['comments']    ?? null, // Athugasemdir
+                'blomarammiVerd' => isset($data['blomarammi_verd']) ? (int) $data['blomarammi_verd'] : null,
+                'uppsetningVerd' => isset($data['uppsetning_verd']) ? (int) $data['uppsetning_verd'] : null,
+            ], fn ($v) => $v !== null && $v !== ''),
+            // Typed add-ons — type decides the template section:
+            // kross | luktVasi | fugl | mynd | rammi | annad
             'addons' => array_map(function ($a) {
                 return [
-                    'code'  => $a['code'] ?? '',
+                    'type'  => $a['type']  ?? 'annad',
+                    'code'  => $a['code']  ?? '',
                     'label' => $a['label'] ?? '',
                     'qty'   => (int) ($a['qty'] ?? 1),
                 ];
@@ -93,16 +113,27 @@ if (!function_exists('inquiry_send_to_payload')) {
  * ---------------------------------------------------------------------------
  *
  * inquiry_send_to_payload([
- *     'customer_name'     => $form['name'],
- *     'customer_email'    => $form['email'],
- *     'customer_phone'    => $form['phone'],
- *     'deceased_name'     => $form['deceased_name'],
- *     'deceased_born'     => $form['born'],
- *     'deceased_died'     => $form['died'],
- *     'product_item_code' => $form['product_id'],   // must be the DK ItemCode
- *     'inscription_lines' => $form['inscriptions'], // array of strings
- *     'addons'            => [                       // array of {code,label,qty}
- *         ['code' => 'ADDON-GOLD', 'label' => 'Gold leaf', 'qty' => 1],
+ *     'customer_first_name' => $form['first_name'],
+ *     'customer_last_name'  => $form['last_name'],
+ *     'customer_kennitala'  => $form['kennitala'],
+ *     'customer_address'    => $form['address'],
+ *     'customer_phone'      => $form['phone'],
+ *     'customer_email'      => $form['email'],
+ *     'deceased_first_name' => $form['deceased_first_name'],
+ *     'deceased_last_name'  => $form['deceased_last_name'],
+ *     'deceased_born'       => $form['born'],            // '1951-04-17' or '17.04.51'
+ *     'deceased_died'       => $form['died'],
+ *     'product_item_code'   => $form['stone_code'],      // DK ItemCode, e.g. 'H111'
+ *     'inscription_lines'   => $form['inscriptions'],    // extra lines only
+ *     'letur'               => $form['font'],            // e.g. 'Times New Roman'
+ *     'litur'               => $form['letter_color'],    // e.g. 'Gull'
+ *     'stone_color'         => $form['stone_color'],     // e.g. 'SB'
+ *     'cemetery'            => $form['cemetery'],        // e.g. 'Gufunes'
+ *     'per_char_price'      => 260,                      // 260 | 1070 | 1250 | 1490
+ *     'addons'              => [                          // {type,code,label,qty}
+ *         ['type' => 'kross',    'code' => 'BK101', 'label' => 'Kross',  'qty' => 1],
+ *         ['type' => 'luktVasi', 'code' => 'LK01',  'label' => 'Lukt',   'qty' => 1],
+ *         ['type' => 'fugl',     'code' => 'FK01',  'label' => 'Dúfa',   'qty' => 2],
  *     ],
  * ], [
  *     // absolute media-library URLs of the uploaded reference images:

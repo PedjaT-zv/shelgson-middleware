@@ -14,8 +14,18 @@ export interface InquiryEmailData {
   productItemCode: string
   productDescription?: string
   inscriptionLines: string[]
-  addons: { code: string; label?: string; qty: number }[]
+  addons: { type?: string; code: string; label?: string; qty: number }[]
+  options?: { letur?: string; litur?: string; stoneColor?: string; cemetery?: string }
   referenceImageUrls: string[]
+}
+
+const ADDON_TYPE_LABELS: Record<string, string> = {
+  kross: 'Kross',
+  luktVasi: 'Lukt/vasi',
+  fugl: 'Fugl',
+  mynd: 'Mynd',
+  rammi: 'Rammi',
+  annad: 'Annað',
 }
 
 function esc(s: unknown): string {
@@ -40,7 +50,10 @@ export function buildDesignerBrief(data: InquiryEmailData): { subject: string; h
 
   const addons = data.addons.length
     ? `<ul style="margin:4px 0 0;padding-left:18px">${data.addons
-        .map((a) => `<li>${esc(a.label || a.code)} × ${esc(a.qty)} <span style="color:#888">(${esc(a.code)})</span></li>`)
+        .map(
+          (a) =>
+            `<li>${a.type ? `${esc(ADDON_TYPE_LABELS[a.type] ?? a.type)}: ` : ''}${esc(a.label || a.code)} × ${esc(a.qty)} <span style="color:#888">(${esc(a.code)})</span></li>`,
+        )
         .join('')}</ul>`
     : '—'
 
@@ -61,7 +74,11 @@ export function buildDesignerBrief(data: InquiryEmailData): { subject: string; h
       ${row('Customer', data.customerName)}
       ${row('Deceased', data.deceasedName)}
       ${row('Dates', [data.deceasedBorn, data.deceasedDied].filter(Boolean).join(' – '))}
-      ${row('Product', `${data.productDescription ?? ''} (${data.productItemCode})`)}
+      ${row('Stone (Steinn)', `${data.productDescription ?? ''} (${data.productItemCode})`)}
+      ${row('Stone colour (Glitir)', data.options?.stoneColor)}
+      ${row('Font (Letur)', data.options?.letur)}
+      ${row('Lettering colour (Litur)', data.options?.litur)}
+      ${row('Cemetery (Kirkjugarður)', data.options?.cemetery)}
     </table>
     <h3 style="margin:18px 0 2px">Inscription</h3>${inscriptions}
     <h3 style="margin:18px 0 2px">Add-ons</h3>${addons}

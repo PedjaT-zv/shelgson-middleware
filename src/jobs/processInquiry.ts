@@ -2,13 +2,8 @@ import type { TaskConfig } from 'payload'
 
 import { downloadReferenceImage } from '../lib/downloadImage'
 import { buildDesignerBrief, buildSalesQuote, type InquiryEmailData } from '../lib/emails'
-import {
-  generateQuoteWorkbook,
-  loadMasterTemplate,
-  quoteFileName,
-  type PriceRow,
-  type QuoteData,
-} from '../lib/excel'
+import { generateQuoteWorkbook, loadMasterTemplate, quoteFileName, type PriceRow } from '../lib/excel'
+import { buildQuoteData } from '../lib/quoteData'
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -99,25 +94,10 @@ export const processInquiry: TaskConfig<'processInquiry'> = {
       })
       const prices: PriceRow[] = priced.docs
         .filter((d) => typeof d.unitPrice1 === 'number')
-        .map((d) => ({ itemCode: d.itemCode, unitPrice: d.unitPrice1 as number, description: d.description ?? undefined }))
+        .map((d) => ({ itemCode: d.itemCode, unitPrice: d.unitPrice1 as number }))
 
       // --- 4. Generate the Excel quote ---
-      const addons = (inquiry.addons ?? []) as { code?: string; qty?: number }[]
-      const inscriptionLines = ((inquiry.inscriptionLines ?? []) as { line?: string }[])
-        .map((l) => l.line ?? '')
-        .filter(Boolean)
-
-      const quoteData: QuoteData = {
-        customerName: (inquiry.customer as { name?: string })?.name,
-        customerEmail: (inquiry.customer as { email?: string })?.email,
-        customerPhone: (inquiry.customer as { phone?: string })?.phone,
-        deceasedName: (inquiry.deceased as { name?: string })?.name,
-        deceasedBorn: (inquiry.deceased as { bornDate?: string })?.bornDate,
-        deceasedDied: (inquiry.deceased as { diedDate?: string })?.diedDate,
-        productItemCode: itemCode,
-        inscriptionLines,
-        addons: addons.map((a) => ({ code: a.code ?? '', qty: a.qty ?? 1 })).filter((a) => a.code),
-      }
+      const quoteData = buildQuoteData(inquiry)
 
       const template = await loadMasterTemplate()
       const xlsx = await generateQuoteWorkbook(template, quoteData, prices)
@@ -155,15 +135,26 @@ export const processInquiry: TaskConfig<'processInquiry'> = {
       const emailData: InquiryEmailData = {
         id: inquiryId,
         customerName: quoteData.customerName,
-        customerEmail: quoteData.customerEmail,
-        customerPhone: quoteData.customerPhone,
+        customerEmail: quoteData.email,
+        customerPhone: quoteData.phone,
         deceasedName: quoteData.deceasedName,
         deceasedBorn: quoteData.deceasedBorn,
         deceasedDied: quoteData.deceasedDied,
         productItemCode: itemCode,
         productDescription: product?.description ?? undefined,
-        inscriptionLines,
-        addons: addons.map((a) => ({ code: a.code ?? '', qty: a.qty ?? 1 })),
+        inscriptionLines: quoteData.inscriptionLines,
+        addons: (inquiry.addons ?? []).map((a) => ({
+          type: a.type ?? undefined,
+          code: a.code ?? '',
+          label: a.label ?? undefined,
+          qty: a.qty ?? 1,
+        })),
+        options: {
+          letur: quoteData.letur,
+          litur: quoteData.litur,
+          stoneColor: quoteData.stoneColor,
+          cemetery: quoteData.cemetery,
+        },
         referenceImageUrls: refImageUrls,
       }
 

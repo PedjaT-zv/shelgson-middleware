@@ -4,65 +4,124 @@ import path from 'path'
 import ExcelJS from 'exceljs'
 
 /**
- * Excel quote generation.
+ * Excel quote generation against the client's REAL master template
+ * (src/templates/master-quote-template.xlsx — Icelandic, and it must stay
+ * Icelandic; we only write values into input cells, never labels).
  *
- * Strategy (confirmed with the client):
- *  - The master template keeps its VLOOKUP formulas; we only write INPUT cells
- *    (customer/deceased/inscription/codes) and repopulate the price-table sheet
- *    from the daily DK sync — so DK is the single source of truth for prices.
- *  - ExcelJS preserves formula strings but does NOT recalculate. We set
- *    `workbook.calcProperties.fullCalcOnLoad = true` so Excel/LibreOffice/Sheets
- *    recompute every VLOOKUP the moment the salesperson opens the file.
- *  - Totals are therefore correct in-file (the confirmed requirement). If a
- *    server-side total is ever needed, compute it from `prices` here — do not
- *    read it back from the written workbook (that value is stale).
+ * Template layout (see TEMPLATE_MAP):
+ *  - Sheet "Pantanir": the order form. Input cells for customer / deceased /
+ *    inscription / stone / add-on codes. Price cells carry the template's own
+ *    VLOOKUP formulas over named ranges (STVerð, KrossarVerð, LuktirVasarVerð,
+ *    FuglarVerð, MyndVerð, RammiVerð, AnnaðVerð) — we never overwrite formulas.
+ *  - Sheet "Vörulisti": the code → price tables those named ranges point at.
+ *    We inject current DK prices here by matching itemCode, so the template's
+ *    formulas price the order from live data. Codes we don't know keep the
+ *    template's own price.
+ *  - Sheet "Sheet1": internal notes — untouched.
+ *
+ * ExcelJS preserves formulas but does not recalculate, so we set
+ * `fullCalcOnLoad` and Excel/LibreOffice recomputes when the file is opened.
  */
+
+export type AddonType = 'kross' | 'luktVasi' | 'fugl' | 'mynd' | 'rammi' | 'annad'
 
 export interface QuoteData {
   customerName?: string
-  customerEmail?: string
-  customerPhone?: string
+  kennitala?: string
+  address?: string
+  phone?: string
+  email?: string
+  /** Order date shown in the Dagsetning cell (dd.mm.yyyy). */
+  orderDate?: string
+  delivery?: string
+  cemetery?: string
   deceasedName?: string
+  /** Short dates (dd.mm.yy) — rendered as "f.<born> d.<died>" under the name. */
   deceasedBorn?: string
   deceasedDied?: string
-  productItemCode: string
   inscriptionLines: string[]
-  addons: { code: string; qty: number }[]
+  /** DK ItemCode of the tombstone (Steinn), e.g. "H111". */
+  productItemCode: string
+  /** Stone colour code from the Glitir list (SB, BG, NA, …). */
+  stoneColor?: string
+  letur?: string
+  litur?: string
+  perCharPrice?: number
+  solumadur?: string
+  comments?: string
+  blomarammiVerd?: number
+  uppsetningVerd?: number
+  /** Discount amount; written as a negative number so the total subtracts it. */
+  afslattur?: number
+  addons: { type: AddonType; code: string; qty?: number }[]
 }
 
 export interface PriceRow {
   itemCode: string
   unitPrice: number
-  description?: string
 }
 
 /**
- * Maps logical fields to physical cells in the template. ALIGN THESE with the
- * client's real master-quote-template.xlsx (sheet names, cell addresses, and
- * the price table's columns/start row). The dev template built by
- * `buildDevTemplate()` matches this map exactly.
+ * Maps logical fields to physical cells in master-quote-template.xlsx.
+ * Verified against the client's filled example (Sep 2026). If the client
+ * reshuffles the template, re-align these addresses.
  */
 export const TEMPLATE_MAP = {
-  quoteSheet: 'Quote',
-  priceSheet: 'Prices',
-  price: {
-    startRow: 2,
-    itemCodeCol: 'A',
-    unitPriceCol: 'B',
-    descriptionCol: 'C',
-  },
+  orderSheet: 'Pantanir',
+  priceSheet: 'Vörulisti',
   cells: {
-    customerName: 'C2',
-    customerEmail: 'C3',
-    customerPhone: 'C4',
-    deceasedName: 'C5',
-    deceasedBorn: 'C6',
-    deceasedDied: 'C7',
-    productItemCode: 'C9',
+    customerName: 'D9', // Nafn
+    kennitala: 'D11', // Kt
+    address: 'D12', // Heimili
+    phone: 'D13', // Sími
+    email: 'D14', // Netfang
+    orderDate: 'K11', // Dagsetning
+    delivery: 'K12', // Afhending
+    cemetery: 'J15', // Kirkjugarður
+    letur: 'D29', // Letur
+    stoneCode: 'H29', // Steinn
+    stoneColor: 'I29', // Glitir code next to the stone
+    perCharPrice: 'H30', // Áletrun price per character (260/1070/1250/1490)
+    litur: 'D31', // Litur
+    solumadur: 'E57', // Sölumaður
+    blomarammiVerd: 'K39', // Blómarammi — manual price cell
+    uppsetningVerd: 'K50', // Uppsetning — manual price cell
+    afslattur: 'K52', // Afsláttur — manual (negative) price cell
   },
-  inscription: { startRow: 12, col: 'C', maxRows: 4 },
-  addons: { startRow: 17, codeCol: 'A', qtyCol: 'B', maxRows: 8 },
+  inscription: {
+    nameCell: 'C19',
+    datesCell: 'C20',
+    extraStartRow: 22,
+    col: 'C',
+    lastRow: 27,
+  },
+  comments: { col: 'C', rows: [34, 35, 36] }, // under "Athugasemdir:"
+  addonSlots: {
+    kross: ['H31'],
+    luktVasi: ['H32', 'H33'],
+    fugl: ['H34', 'H35', 'H36'],
+    mynd: ['H37'],
+    rammi: ['H38'],
+    annad: ['H40', 'H41', 'H42', 'H43', 'H44', 'H45', 'H46', 'H47', 'H48', 'H49'],
+  },
+  // K31 is static in the saved template; restore the standard lookup formula
+  // when we place a cross so it prices itself like the other add-on rows.
+  krossPriceCell: 'K31',
+  krossPriceFormula:
+    'IF(ISNA(VLOOKUP(H31, KrossarVerð, 2, FALSE)) = TRUE, "", VLOOKUP(H31, KrossarVerð, 2, FALSE))',
+  // Vörulisti code → price column pairs (bounds from the workbook's named ranges).
+  priceTables: [
+    { codeCol: 'C', priceCol: 'D', from: 4, to: 165 }, // STVerð (stones)
+    { codeCol: 'H', priceCol: 'I', from: 4, to: 149 }, // KrossarVerð
+    { codeCol: 'K', priceCol: 'L', from: 4, to: 38 }, // LuktirVasarVerð
+    { codeCol: 'N', priceCol: 'O', from: 4, to: 50 }, // MyndVerð + RammiVerð + FuglarVerð
+    { codeCol: 'Q', priceCol: 'R', from: 5, to: 140 }, // AnnaðVerð
+  ],
 } as const
+
+function isFormula(v: ExcelJS.CellValue): boolean {
+  return Boolean(v && typeof v === 'object' && ('formula' in v || 'sharedFormula' in v))
+}
 
 function setIfPresent(ws: ExcelJS.Worksheet, addr: string, value: unknown) {
   if (value !== undefined && value !== null && value !== '') {
@@ -71,9 +130,10 @@ function setIfPresent(ws: ExcelJS.Worksheet, addr: string, value: unknown) {
 }
 
 /**
- * Load the master template, inject current DK prices into the price sheet, fill
- * the customer/deceased/inscription/addon input cells, flag full recalc, and
- * return the resulting .xlsx as a Buffer. Formula cells are never overwritten.
+ * Load the master template, inject current DK prices into the Vörulisti price
+ * tables (matched by itemCode), fill the Pantanir input cells, flag full
+ * recalc, and return the resulting .xlsx as a Buffer. Formula cells are never
+ * overwritten; template labels stay in Icelandic untouched.
  */
 export async function generateQuoteWorkbook(
   templateBuffer: Buffer,
@@ -85,49 +145,98 @@ export async function generateQuoteWorkbook(
 
   const map = TEMPLATE_MAP
 
-  // --- 1. Repopulate the price table from the DK catalog ---
+  // --- 1. Inject DK prices into the Vörulisti tables (match by code) ---
   const priceWs = wb.getWorksheet(map.priceSheet)
   if (!priceWs) throw new Error(`Template is missing the "${map.priceSheet}" sheet`)
 
-  // Clear any existing rows in the price columns from startRow down.
-  const lastRow = Math.max(priceWs.rowCount, map.price.startRow + prices.length)
-  for (let r = map.price.startRow; r <= lastRow; r++) {
-    priceWs.getCell(`${map.price.itemCodeCol}${r}`).value = null
-    priceWs.getCell(`${map.price.unitPriceCol}${r}`).value = null
-    priceWs.getCell(`${map.price.descriptionCol}${r}`).value = null
+  const priceByCode = new Map(prices.map((p) => [p.itemCode, p.unitPrice]))
+  for (const table of map.priceTables) {
+    for (let r = table.from; r <= table.to; r++) {
+      const code = priceWs.getCell(`${table.codeCol}${r}`).value
+      if (typeof code !== 'string') continue
+      const dkPrice = priceByCode.get(code.trim())
+      if (dkPrice === undefined) continue
+      const priceCell = priceWs.getCell(`${table.priceCol}${r}`)
+      if (isFormula(priceCell.value)) continue
+      priceCell.value = dkPrice
+    }
   }
-  prices.forEach((row, i) => {
-    const r = map.price.startRow + i
-    priceWs.getCell(`${map.price.itemCodeCol}${r}`).value = row.itemCode
-    priceWs.getCell(`${map.price.unitPriceCol}${r}`).value = row.unitPrice
-    if (row.description) priceWs.getCell(`${map.price.descriptionCol}${r}`).value = row.description
-  })
 
-  // --- 2. Fill quote input cells ---
-  const q = wb.getWorksheet(map.quoteSheet)
-  if (!q) throw new Error(`Template is missing the "${map.quoteSheet}" sheet`)
+  // --- 2. Fill the order-form input cells ---
+  const q = wb.getWorksheet(map.orderSheet)
+  if (!q) throw new Error(`Template is missing the "${map.orderSheet}" sheet`)
 
   setIfPresent(q, map.cells.customerName, quote.customerName)
-  setIfPresent(q, map.cells.customerEmail, quote.customerEmail)
-  setIfPresent(q, map.cells.customerPhone, quote.customerPhone)
-  setIfPresent(q, map.cells.deceasedName, quote.deceasedName)
-  setIfPresent(q, map.cells.deceasedBorn, quote.deceasedBorn)
-  setIfPresent(q, map.cells.deceasedDied, quote.deceasedDied)
-  setIfPresent(q, map.cells.productItemCode, quote.productItemCode)
+  setIfPresent(q, map.cells.kennitala, quote.kennitala)
+  setIfPresent(q, map.cells.address, quote.address)
+  setIfPresent(q, map.cells.phone, quote.phone)
+  setIfPresent(q, map.cells.email, quote.email)
+  setIfPresent(q, map.cells.orderDate, quote.orderDate)
+  setIfPresent(q, map.cells.delivery, quote.delivery)
+  setIfPresent(q, map.cells.cemetery, quote.cemetery)
+  setIfPresent(q, map.cells.letur, quote.letur)
+  setIfPresent(q, map.cells.stoneCode, quote.productItemCode)
+  setIfPresent(q, map.cells.stoneColor, quote.stoneColor)
+  setIfPresent(q, map.cells.perCharPrice, quote.perCharPrice)
+  setIfPresent(q, map.cells.litur, quote.litur)
+  setIfPresent(q, map.cells.solumadur, quote.solumadur)
+  setIfPresent(q, map.cells.blomarammiVerd, quote.blomarammiVerd)
+  setIfPresent(q, map.cells.uppsetningVerd, quote.uppsetningVerd)
+  if (typeof quote.afslattur === 'number' && quote.afslattur !== 0) {
+    q.getCell(map.cells.afslattur).value = -Math.abs(quote.afslattur)
+  }
 
-  // Inscription lines (one per row, capped).
-  quote.inscriptionLines.slice(0, map.inscription.maxRows).forEach((line, i) => {
-    q.getCell(`${map.inscription.col}${map.inscription.startRow + i}`).value = line
+  // --- 3. Inscription block: name, "f.… d.…" line, then the free lines ---
+  setIfPresent(q, map.inscription.nameCell, quote.deceasedName)
+  const dates = [
+    quote.deceasedBorn ? `f.${quote.deceasedBorn}` : '',
+    quote.deceasedDied ? `d.${quote.deceasedDied}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  setIfPresent(q, map.inscription.datesCell, dates)
+  const maxExtra = map.inscription.lastRow - map.inscription.extraStartRow + 1
+  quote.inscriptionLines.slice(0, maxExtra).forEach((line, i) => {
+    q.getCell(`${map.inscription.col}${map.inscription.extraStartRow + i}`).value = line
   })
 
-  // Add-on codes + quantities (price/line-total columns are template formulas).
-  quote.addons.slice(0, map.addons.maxRows).forEach((addon, i) => {
-    const r = map.addons.startRow + i
-    q.getCell(`${map.addons.codeCol}${r}`).value = addon.code
-    q.getCell(`${map.addons.qtyCol}${r}`).value = addon.qty
-  })
+  // --- 4. Comments (one line per row under Athugasemdir) ---
+  if (quote.comments) {
+    const lines = quote.comments.split('\n')
+    map.comments.rows.forEach((row, i) => {
+      if (lines[i]) q.getCell(`${map.comments.col}${row}`).value = lines[i]
+    })
+  }
 
-  // --- 3. Force recalculation when the file is opened ---
+  // --- 5. Add-ons into their typed slots (qty > 1 repeats the code) ---
+  const free: Record<AddonType, string[]> = {
+    kross: [...map.addonSlots.kross],
+    luktVasi: [...map.addonSlots.luktVasi],
+    fugl: [...map.addonSlots.fugl],
+    mynd: [...map.addonSlots.mynd],
+    rammi: [...map.addonSlots.rammi],
+    annad: [...map.addonSlots.annad],
+  }
+  const overflow: string[] = []
+  for (const addon of quote.addons) {
+    for (let i = 0; i < Math.max(1, addon.qty ?? 1); i++) {
+      const slot = free[addon.type]?.shift()
+      if (slot) q.getCell(slot).value = addon.code
+      else overflow.push(addon.code)
+    }
+  }
+  // Anything that didn't fit its own section lands in a free "Annað" row so it
+  // is at least visible to the salesperson (price may show blank there).
+  for (const code of overflow) {
+    const slot = free.annad.shift()
+    if (slot) q.getCell(slot).value = code
+  }
+  // A placed cross needs its lookup formula restored (static cell in template).
+  if (quote.addons.some((a) => a.type === 'kross')) {
+    q.getCell(map.krossPriceCell).value = { formula: map.krossPriceFormula }
+  }
+
+  // --- 6. Force recalculation when the file is opened ---
   wb.calcProperties.fullCalcOnLoad = true
 
   const out = await wb.xlsx.writeBuffer()
@@ -146,48 +255,4 @@ export async function loadMasterTemplate(): Promise<Buffer> {
 export function quoteFileName(customerName: string | undefined, inquiryId: string | number): string {
   const safe = (customerName ?? 'customer').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 60) || 'customer'
   return `Quote - ${safe} - ${inquiryId}.xlsx`
-}
-
-/**
- * Build a DEV master template that matches TEMPLATE_MAP, with real VLOOKUP
- * formulas so the fullCalcOnLoad recalculation can be verified end-to-end.
- * Replace src/templates/master-quote-template.xlsx with the client's real file.
- */
-export async function buildDevTemplate(): Promise<Buffer> {
-  const wb = new ExcelJS.Workbook()
-
-  const prices = wb.addWorksheet('Prices')
-  prices.getCell('A1').value = 'ItemCode'
-  prices.getCell('B1').value = 'UnitPrice'
-  prices.getCell('C1').value = 'Description'
-
-  const q = wb.addWorksheet('Quote')
-  q.getCell('B2').value = 'Customer'
-  q.getCell('B3').value = 'Email'
-  q.getCell('B4').value = 'Phone'
-  q.getCell('B5').value = 'Deceased'
-  q.getCell('B6').value = 'Born'
-  q.getCell('B7').value = 'Died'
-  q.getCell('B9').value = 'Product code'
-  q.getCell('B10').value = 'Product price'
-  // VLOOKUP the chosen product's unit price from the Prices sheet.
-  q.getCell('C10').value = { formula: 'VLOOKUP(C9,Prices!A:B,2,FALSE)' }
-
-  q.getCell('B11').value = 'Inscription'
-
-  // Add-on table: A=code (input), B=qty (input), C=unit price (VLOOKUP), D=line total.
-  q.getCell('A16').value = 'Add-on code'
-  q.getCell('B16').value = 'Qty'
-  q.getCell('C16').value = 'Unit price'
-  q.getCell('D16').value = 'Line total'
-  for (let r = 17; r <= 24; r++) {
-    q.getCell(`C${r}`).value = { formula: `IF(A${r}="",0,VLOOKUP(A${r},Prices!A:B,2,FALSE))` }
-    q.getCell(`D${r}`).value = { formula: `B${r}*C${r}` }
-  }
-
-  q.getCell('B26').value = 'TOTAL'
-  q.getCell('C26').value = { formula: 'C10+SUM(D17:D24)' }
-
-  const out = await wb.xlsx.writeBuffer()
-  return Buffer.from(out)
 }

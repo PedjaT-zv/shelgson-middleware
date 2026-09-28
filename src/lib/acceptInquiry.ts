@@ -2,13 +2,8 @@ import type { Payload } from 'payload'
 
 import { upsertCatalogItem } from './catalogUpsert'
 import { fetchProduct } from './dkClient'
-import {
-  generateQuoteWorkbook,
-  loadMasterTemplate,
-  quoteFileName,
-  type PriceRow,
-  type QuoteData,
-} from './excel'
+import { generateQuoteWorkbook, loadMasterTemplate, quoteFileName, type PriceRow } from './excel'
+import { buildQuoteData } from './quoteData'
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -71,29 +66,12 @@ export async function acceptInquiry(
     })
     const prices: PriceRow[] = priced.docs
       .filter((d) => typeof d.unitPrice1 === 'number')
-      .map((d) => ({
-        itemCode: d.itemCode,
-        unitPrice: d.unitPrice1 as number,
-        description: d.description ?? undefined,
-      }))
+      .map((d) => ({ itemCode: d.itemCode, unitPrice: d.unitPrice1 as number }))
 
     const mainItem = priced.docs.find((d) => d.itemCode === itemCode)
 
     // --- 3. Regenerate the Excel quote with real prices ---
-    const inscriptionLines = ((inquiry.inscriptionLines ?? []) as { line?: string }[])
-      .map((l) => l.line ?? '')
-      .filter(Boolean)
-    const quoteData: QuoteData = {
-      customerName: (inquiry.customer as { name?: string })?.name,
-      customerEmail: (inquiry.customer as { email?: string })?.email,
-      customerPhone: (inquiry.customer as { phone?: string })?.phone,
-      deceasedName: (inquiry.deceased as { name?: string })?.name,
-      deceasedBorn: (inquiry.deceased as { bornDate?: string })?.bornDate,
-      deceasedDied: (inquiry.deceased as { diedDate?: string })?.diedDate,
-      productItemCode: itemCode,
-      inscriptionLines,
-      addons: addons.map((a) => ({ code: a.code ?? '', qty: a.qty ?? 1 })).filter((a) => a.code),
-    }
+    const quoteData = buildQuoteData(inquiry)
 
     const template = await loadMasterTemplate()
     const xlsx = await generateQuoteWorkbook(template, quoteData, prices)

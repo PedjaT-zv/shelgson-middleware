@@ -3,6 +3,7 @@ import { MigrateUpArgs, MigrateDownArgs, sql } from '@payloadcms/db-postgres'
 export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   await db.execute(sql`
    CREATE TYPE "public"."enum_media_kind" AS ENUM('reference', 'quote', 'mockup');
+  CREATE TYPE "public"."enum_inquiries_addons_type" AS ENUM('kross', 'luktVasi', 'fugl', 'mynd', 'rammi', 'annad');
   CREATE TYPE "public"."enum_inquiries_status" AS ENUM('received', 'processing', 'quoted', 'emailed', 'accepting', 'accepted', 'failed');
   CREATE TYPE "public"."enum_email_logs_email_type" AS ENUM('designer-brief', 'sales-quote');
   CREATE TYPE "public"."enum_email_logs_status" AS ENUM('sent', 'failed');
@@ -84,6 +85,7 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   	"_order" integer NOT NULL,
   	"_parent_id" integer NOT NULL,
   	"id" varchar PRIMARY KEY NOT NULL,
+  	"type" "enum_inquiries_addons_type" DEFAULT 'annad',
   	"code" varchar NOT NULL,
   	"label" varchar,
   	"qty" numeric DEFAULT 1
@@ -102,12 +104,27 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   	"status" "enum_inquiries_status" DEFAULT 'received',
   	"accepted_at" timestamp(3) with time zone,
   	"accepted_by_id" integer,
-  	"customer_name" varchar,
-  	"customer_email" varchar,
+  	"customer_first_name" varchar,
+  	"customer_last_name" varchar,
+  	"customer_kennitala" varchar,
+  	"customer_address" varchar,
   	"customer_phone" varchar,
-  	"deceased_name" varchar,
+  	"customer_email" varchar,
+  	"deceased_first_name" varchar,
+  	"deceased_last_name" varchar,
   	"deceased_born_date" varchar,
   	"deceased_died_date" varchar,
+  	"options_letur" varchar,
+  	"options_litur" varchar,
+  	"options_stone_color" varchar,
+  	"options_cemetery" varchar,
+  	"options_delivery" varchar,
+  	"options_per_char_price" numeric,
+  	"options_solumadur" varchar,
+  	"options_comments" varchar,
+  	"options_blomarammi_verd" numeric,
+  	"options_uppsetning_verd" numeric,
+  	"options_afslattur" numeric,
   	"wanted_product_item_code" varchar NOT NULL,
   	"wanted_product_catalog_item_id" integer,
   	"wanted_product_resolved_description" varchar,
@@ -328,6 +345,7 @@ export async function down({ db, payload, req }: MigrateDownArgs): Promise<void>
   DROP TABLE "payload_migrations" CASCADE;
   DROP TABLE "payload_jobs_stats" CASCADE;
   DROP TYPE "public"."enum_media_kind";
+  DROP TYPE "public"."enum_inquiries_addons_type";
   DROP TYPE "public"."enum_inquiries_status";
   DROP TYPE "public"."enum_email_logs_email_type";
   DROP TYPE "public"."enum_email_logs_status";

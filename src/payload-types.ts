@@ -252,12 +252,22 @@ export interface Inquiry {
    */
   acceptedBy?: (number | null) | User;
   customer?: {
-    name?: string | null;
-    email?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    /**
+     * Icelandic national ID (Kt.).
+     */
+    kennitala?: string | null;
+    /**
+     * Heimili.
+     */
+    address?: string | null;
     phone?: string | null;
+    email?: string | null;
   };
   deceased?: {
-    name?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
     /**
      * As submitted (free text / date).
      */
@@ -266,6 +276,55 @@ export interface Inquiry {
      * As submitted (free text / date).
      */
     diedDate?: string | null;
+  };
+  /**
+   * Selections from the order template (Icelandic values).
+   */
+  options?: {
+    /**
+     * Font (Letur list).
+     */
+    letur?: string | null;
+    /**
+     * Lettering colour (Litur list).
+     */
+    litur?: string | null;
+    /**
+     * Stone colour code (Glitir list: SB, BG, …).
+     */
+    stoneColor?: string | null;
+    /**
+     * Kirkjugarður.
+     */
+    cemetery?: string | null;
+    /**
+     * Afhending.
+     */
+    delivery?: string | null;
+    /**
+     * Áletrun price per character (260/1070/1250/1490).
+     */
+    perCharPrice?: number | null;
+    /**
+     * Sölumaður.
+     */
+    solumadur?: string | null;
+    /**
+     * Athugasemdir.
+     */
+    comments?: string | null;
+    /**
+     * Blómarammi price, if chosen.
+     */
+    blomarammiVerd?: number | null;
+    /**
+     * Uppsetning (installation) price, if chosen.
+     */
+    uppsetningVerd?: number | null;
+    /**
+     * Discount amount (entered as negative in the sheet).
+     */
+    afslattur?: number | null;
   };
   wantedProduct: {
     /**
@@ -283,10 +342,11 @@ export interface Inquiry {
       }[]
     | null;
   /**
-   * Material / add-on codes selected by the customer.
+   * Add-on codes selected by the customer; type decides the template section.
    */
   addons?:
     | {
+        type?: ('kross' | 'luktVasi' | 'fugl' | 'mynd' | 'rammi' | 'annad') | null;
         code: string;
         label?: string | null;
         qty?: number | null;
@@ -645,16 +705,35 @@ export interface InquiriesSelect<T extends boolean = true> {
   customer?:
     | T
     | {
-        name?: T;
-        email?: T;
+        firstName?: T;
+        lastName?: T;
+        kennitala?: T;
+        address?: T;
         phone?: T;
+        email?: T;
       };
   deceased?:
     | T
     | {
-        name?: T;
+        firstName?: T;
+        lastName?: T;
         bornDate?: T;
         diedDate?: T;
+      };
+  options?:
+    | T
+    | {
+        letur?: T;
+        litur?: T;
+        stoneColor?: T;
+        cemetery?: T;
+        delivery?: T;
+        perCharPrice?: T;
+        solumadur?: T;
+        comments?: T;
+        blomarammiVerd?: T;
+        uppsetningVerd?: T;
+        afslattur?: T;
       };
   wantedProduct?:
     | T
@@ -673,6 +752,7 @@ export interface InquiriesSelect<T extends boolean = true> {
   addons?:
     | T
     | {
+        type?: T;
         code?: T;
         label?: T;
         qty?: T;

@@ -694,6 +694,14 @@
           "primaryKey": true,
           "notNull": true
         },
+        "type": {
+          "name": "type",
+          "type": "enum_inquiries_addons_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'annad'"
+        },
         "code": {
           "name": "code",
           "type": "varchar",
@@ -913,14 +921,26 @@
           "primaryKey": false,
           "notNull": false
         },
-        "customer_name": {
-          "name": "customer_name",
+        "customer_first_name": {
+          "name": "customer_first_name",
           "type": "varchar",
           "primaryKey": false,
           "notNull": false
         },
-        "customer_email": {
-          "name": "customer_email",
+        "customer_last_name": {
+          "name": "customer_last_name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_kennitala": {
+          "name": "customer_kennitala",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_address": {
+          "name": "customer_address",
           "type": "varchar",
           "primaryKey": false,
           "notNull": false
@@ -931,8 +951,20 @@
           "primaryKey": false,
           "notNull": false
         },
-        "deceased_name": {
-          "name": "deceased_name",
+        "customer_email": {
+          "name": "customer_email",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deceased_first_name": {
+          "name": "deceased_first_name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deceased_last_name": {
+          "name": "deceased_last_name",
           "type": "varchar",
           "primaryKey": false,
           "notNull": false
@@ -946,6 +978,72 @@
         "deceased_died_date": {
           "name": "deceased_died_date",
           "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_letur": {
+          "name": "options_letur",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_litur": {
+          "name": "options_litur",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_stone_color": {
+          "name": "options_stone_color",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_cemetery": {
+          "name": "options_cemetery",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_delivery": {
+          "name": "options_delivery",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_per_char_price": {
+          "name": "options_per_char_price",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_solumadur": {
+          "name": "options_solumadur",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_comments": {
+          "name": "options_comments",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_blomarammi_verd": {
+          "name": "options_blomarammi_verd",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_uppsetning_verd": {
+          "name": "options_uppsetning_verd",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "options_afslattur": {
+          "name": "options_afslattur",
+          "type": "numeric",
           "primaryKey": false,
           "notNull": false
         },
@@ -2458,6 +2556,18 @@
         "mockup"
       ]
     },
+    "public.enum_inquiries_addons_type": {
+      "name": "enum_inquiries_addons_type",
+      "schema": "public",
+      "values": [
+        "kross",
+        "luktVasi",
+        "fugl",
+        "mynd",
+        "rammi",
+        "annad"
+      ]
+    },
     "public.enum_inquiries_status": {
       "name": "enum_inquiries_status",
       "schema": "public",
@@ -2524,6 +2634,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "cf2bc86d-2240-4460-b8ff-b0f5d14e3159",
+  "id": "c391051e-9c30-456a-b688-8a3d9994f344",
   "prevId": "00000000-0000-0000-0000-000000000000"
 }

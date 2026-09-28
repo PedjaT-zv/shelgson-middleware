@@ -81,7 +81,9 @@ export const Inquiries: CollectionConfig = {
       hooks: {
         beforeChange: [
           ({ data }) => {
-            const name = data?.customer?.name ?? 'Unknown'
+            const name =
+              [data?.customer?.firstName, data?.customer?.lastName].filter(Boolean).join(' ') ||
+              'Unknown'
             const code = data?.wantedProduct?.itemCode ?? '—'
             return `${name} · ${code}`
           },
@@ -135,18 +137,40 @@ export const Inquiries: CollectionConfig = {
       name: 'customer',
       type: 'group',
       fields: [
-        { name: 'name', type: 'text' },
-        { name: 'email', type: 'email' },
+        { name: 'firstName', type: 'text' },
+        { name: 'lastName', type: 'text' },
+        { name: 'kennitala', type: 'text', admin: { description: 'Icelandic national ID (Kt.).' } },
+        { name: 'address', type: 'text', admin: { description: 'Heimili.' } },
         { name: 'phone', type: 'text' },
+        { name: 'email', type: 'email' },
       ],
     },
     {
       name: 'deceased',
       type: 'group',
       fields: [
-        { name: 'name', type: 'text' },
+        { name: 'firstName', type: 'text' },
+        { name: 'lastName', type: 'text' },
         { name: 'bornDate', type: 'text', admin: { description: 'As submitted (free text / date).' } },
         { name: 'diedDate', type: 'text', admin: { description: 'As submitted (free text / date).' } },
+      ],
+    },
+    {
+      name: 'options',
+      type: 'group',
+      admin: { description: 'Selections from the order template (Icelandic values).' },
+      fields: [
+        { name: 'letur', type: 'text', admin: { description: 'Font (Letur list).' } },
+        { name: 'litur', type: 'text', admin: { description: 'Lettering colour (Litur list).' } },
+        { name: 'stoneColor', type: 'text', admin: { description: 'Stone colour code (Glitir list: SB, BG, …).' } },
+        { name: 'cemetery', type: 'text', admin: { description: 'Kirkjugarður.' } },
+        { name: 'delivery', type: 'text', admin: { description: 'Afhending.' } },
+        { name: 'perCharPrice', type: 'number', admin: { description: 'Áletrun price per character (260/1070/1250/1490).' } },
+        { name: 'solumadur', type: 'text', admin: { description: 'Sölumaður.' } },
+        { name: 'comments', type: 'textarea', admin: { description: 'Athugasemdir.' } },
+        { name: 'blomarammiVerd', type: 'number', admin: { description: 'Blómarammi price, if chosen.' } },
+        { name: 'uppsetningVerd', type: 'number', admin: { description: 'Uppsetning (installation) price, if chosen.' } },
+        { name: 'afslattur', type: 'number', admin: { description: 'Discount amount (entered as negative in the sheet).' } },
       ],
     },
     {
@@ -174,8 +198,21 @@ export const Inquiries: CollectionConfig = {
       name: 'addons',
       type: 'array',
       labels: { singular: 'Add-on', plural: 'Add-ons' },
-      admin: { description: 'Material / add-on codes selected by the customer.' },
+      admin: { description: 'Add-on codes selected by the customer; type decides the template section.' },
       fields: [
+        {
+          name: 'type',
+          type: 'select',
+          defaultValue: 'annad',
+          options: [
+            { label: 'Kross', value: 'kross' },
+            { label: 'Lukt / vasi', value: 'luktVasi' },
+            { label: 'Fugl', value: 'fugl' },
+            { label: 'Mynd', value: 'mynd' },
+            { label: 'Rammi', value: 'rammi' },
+            { label: 'Annað', value: 'annad' },
+          ],
+        },
         { name: 'code', type: 'text', required: true },
         { name: 'label', type: 'text' },
         { name: 'qty', type: 'number', defaultValue: 1 },
