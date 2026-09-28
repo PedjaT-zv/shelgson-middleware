@@ -1,21 +1,16 @@
 import type { TaskConfig } from 'payload'
 
-import { upsertCatalogItem } from '../lib/catalogUpsert'
-import { iterateProducts } from '../lib/dkClient'
-
-function bool(v: unknown): boolean {
-  return v === true || v === 'true' || v === 1
-}
+import { syncCatalogFromDk } from '../lib/catalogSync'
 
 /**
  * Daily sync of the DK Vörubók product catalog into `catalog-items`.
  *
- * Incremental after the first run: uses the max stored `recordModified` as the
- * dkPlus /Product/modified/{date} cursor. Upserts by `itemCode`. Skips deleted
- * rows and rows without an ItemCode.
+ * Always a full pull (DK's modified-since filter can't give a usable delta —
+ * see dkClient.ts); only rows whose DK data changed are written, and rows DK
+ * doesn't have are removed, so the mirror matches DK exactly.
  *
  * Scheduled daily at 03:00; on a dedicated server `jobs.autoRun` both schedules
- * and runs it (see payload.config.ts).
+ * and runs it (see payload.config.ts). Run on demand: scripts/sync-catalog.mts.
  */
 export const syncCatalog: TaskConfig<'syncCatalog'> = {
   slug: 'syncCatalog',
@@ -23,37 +18,9 @@ export const syncCatalog: TaskConfig<'syncCatalog'> = {
   schedule: [{ cron: '0 3 * * *', queue: 'nightly' }],
   handler: async ({ req }) => {
     const { payload } = req
-
-    // Determine the incremental cursor from the newest RecordModified we have.
-    const latest = await payload.find({
-      collection: 'catalog-items',
-      sort: '-recordModified',
-      limit: 1,
-      depth: 0,
-      overrideAccess: true,
-    })
-    const cursor = latest.docs[0]?.recordModified
-    const modifiedSince = cursor ? new Date(cursor).toISOString().slice(0, 10) : undefined
-
-    const now = new Date().toISOString()
-    let upserted = 0
-    let skipped = 0
-
-    payload.logger.info(
-      `syncCatalog: starting ${modifiedSince ? `incremental since ${modifiedSince}` : 'full'} sync`,
-    )
-
-    for await (const p of iterateProducts({ count: 200, modifiedSince })) {
-      if (!p.ItemCode || bool(p.Deleted)) {
-        skipped++
-        continue
-      }
-
-      await upsertCatalogItem(payload, p, now)
-      upserted++
-    }
-
-    payload.logger.info(`syncCatalog: done — upserted ${upserted}, skipped ${skipped}`)
-    return { output: { upserted, skipped } }
+    payload.logger.info('syncCatalog: starting full sync')
+    const result = await syncCatalogFromDk(payload)
+    payload.logger.info(`syncCatalog: done — ${JSON.stringify(result)}`)
+    return { output: result }
   },
 }

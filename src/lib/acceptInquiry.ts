@@ -1,8 +1,7 @@
 import type { Payload } from 'payload'
 
-import { upsertCatalogItem } from './catalogUpsert'
-import { fetchProduct } from './dkClient'
-import { generateQuoteWorkbook, loadMasterTemplate, quoteFileName, type PriceRow } from './excel'
+import { inquiryItemCodes, loadPriceTable, quotePrice, refreshFromDk } from './catalogPrices'
+import { generateQuoteWorkbook, loadMasterTemplate, quoteFileName } from './excel'
 import { buildQuoteData } from './quoteData'
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -12,7 +11,7 @@ export interface AcceptResult {
   fileName: string
   /** Item codes whose live DK price was fetched and stored. */
   refreshed: string[]
-  /** Item codes DK does not know — their price falls back to the catalog mirror (or #N/A). */
+  /** Item codes DK does not know — the template keeps its own price for them. */
   missing: string[]
 }
 
@@ -38,37 +37,16 @@ export async function acceptInquiry(
 
   try {
     // --- 1. Live DK price refresh for this inquiry's items ---
-    const itemCode = (inquiry.wantedProduct as { itemCode?: string })?.itemCode ?? ''
-    const addons = (inquiry.addons ?? []) as { code?: string; qty?: number }[]
-    const codes = [...new Set([itemCode, ...addons.map((a) => a.code ?? '')].filter(Boolean))]
-
+    const itemCode = inquiry.wantedProduct?.itemCode ?? ''
     const now = new Date().toISOString()
-    const refreshed: string[] = []
-    const missing: string[] = []
-    for (const code of codes) {
-      const product = await fetchProduct(code)
-      if (product?.ItemCode) {
-        await upsertCatalogItem(payload, product, now)
-        refreshed.push(code)
-      } else {
-        missing.push(code)
-        payload.logger.warn(`acceptInquiry: itemCode "${code}" not found in DK`)
-      }
+    const { refreshed, missing } = await refreshFromDk(payload, inquiryItemCodes(inquiry))
+    if (missing.length > 0) {
+      payload.logger.warn(`acceptInquiry: not in DK (template price used): ${missing.join(', ')}`)
     }
 
     // --- 2. Rebuild the price table (now containing the live prices) ---
-    const priced = await payload.find({
-      collection: 'catalog-items',
-      where: { inactive: { not_equals: true } },
-      pagination: false,
-      depth: 0,
-      overrideAccess: true,
-    })
-    const prices: PriceRow[] = priced.docs
-      .filter((d) => typeof d.unitPrice1 === 'number')
-      .map((d) => ({ itemCode: d.itemCode, unitPrice: d.unitPrice1 as number }))
-
-    const mainItem = priced.docs.find((d) => d.itemCode === itemCode)
+    const { prices, findItem } = await loadPriceTable(payload)
+    const mainItem = findItem(itemCode)
 
     // --- 3. Regenerate the Excel quote with real prices ---
     const quoteData = buildQuoteData(inquiry)
@@ -92,7 +70,7 @@ export async function acceptInquiry(
           itemCode,
           catalogItem: mainItem?.id,
           resolvedDescription: mainItem?.description ?? undefined,
-          resolvedUnitPrice: mainItem?.unitPrice1 ?? undefined,
+          resolvedUnitPrice: mainItem ? quotePrice(mainItem) : undefined,
         },
         status: 'accepted',
         acceptedAt: now,

@@ -1,12 +1,22 @@
 /**
  * Minimal client for the dkPlus REST API (DK Hugbúnaður).
  *
- * Verified during research:
+ * Verified against the client's live account (Sep 2026):
  *  - Base URL:  https://api.dkplus.is/api/v1
  *  - Auth:      header `Authorization: bearer <GUID>`  (lowercase "bearer")
- *  - Products:  GET /Product/page/{page}/{count}
- *  - Delta:     GET /Product/modified/{modified}/{page}/{count}
- *  - Field trim: ?include=Field1,Field2,...
+ *  - Products:  GET /Product/page/{page}/{count} — pages are 1-based (0 → 400);
+ *               returns a bare array. `?include=Field1,…` trims the fields here.
+ *  - Single:    GET /Product/{itemcode} — case-insensitive lookup (H101 finds
+ *               "h101"), 404 when unknown. Ignores `?include`.
+ *  - ItemCodes are stored lowercase in DK; the quote template uses uppercase,
+ *    so always compare codes through `normalizeItemCode`.
+ *  - UnitPrice1 / UnitPrice1WithTax are ISK sales prices. `CurrencyCode` is the
+ *    item's PURCHASE currency (USD, DEM, …) — not the currency of those prices.
+ *  - `Deleted` is not returned; `Group` is missing on some items.
+ *  - GET /Product/modified/{date}/… filters on a stock/object timestamp, not
+ *    RecordModified, and returns the whole catalog for any date older than a
+ *    few weeks — so the sync pulls everything via /Product/page instead
+ *    (~2k items, a few seconds).
  *
  * No official SDK exists, so we call it with fetch.
  */
@@ -34,7 +44,6 @@ const INCLUDE_FIELDS = [
   'Description',
   'Description2',
   'UnitCode',
-  'CurrencyCode',
   'UnitPrice1',
   'UnitPrice1WithTax',
   'TaxPercent',
@@ -68,14 +77,8 @@ function extractArray(data: unknown): DkProduct[] {
   return []
 }
 
-async function fetchProductsPage(
-  page: number,
-  count: number,
-  modifiedSince?: string,
-): Promise<DkProduct[]> {
-  const p = modifiedSince
-    ? `/Product/modified/${encodeURIComponent(modifiedSince)}/${page}/${count}`
-    : `/Product/page/${page}/${count}`
+async function fetchProductsPage(page: number, count: number): Promise<DkProduct[]> {
+  const p = `/Product/page/${page}/${count}`
   const url = `${baseUrl()}${p}?include=${INCLUDE_FIELDS}`
   const res = await fetch(url, {
     headers: authHeaders(),
@@ -90,11 +93,11 @@ async function fetchProductsPage(
 
 /**
  * Fetch a single product by ItemCode via GET /Product/{itemcode}. Returns null
- * when DK does not know the code (404). Used by the accept flow to pull live
- * prices for exactly the items on an inquiry.
+ * when DK does not know the code (404). Used to pull live prices for exactly
+ * the items on an inquiry.
  */
 export async function fetchProduct(itemCode: string): Promise<DkProduct | null> {
-  const url = `${baseUrl()}/Product/${encodeURIComponent(itemCode)}?include=${INCLUDE_FIELDS}`
+  const url = `${baseUrl()}/Product/${encodeURIComponent(itemCode.trim())}`
   const res = await fetch(url, {
     headers: authHeaders(),
     signal: AbortSignal.timeout(30_000),
@@ -115,21 +118,16 @@ export async function fetchProduct(itemCode: string): Promise<DkProduct | null> 
 
 /**
  * Async iterator over every product, paging until a short page is returned.
- * `modifiedSince` (a YYYY-MM-DD or ISO date) switches to the delta endpoint.
  * `throttleMs` spaces requests out since DK publishes no rate limit.
  */
-export async function* iterateProducts(opts: {
-  count?: number
-  modifiedSince?: string
-  throttleMs?: number
-} = {}): AsyncGenerator<DkProduct> {
-  const count = opts.count ?? 200
+export async function* iterateProducts(opts: { count?: number; throttleMs?: number } = {}): AsyncGenerator<DkProduct> {
+  const count = opts.count ?? 500
   const throttleMs = opts.throttleMs ?? 250
   let page = 1
   // Hard cap to avoid an unbounded loop if the API never returns a short page.
   const maxPages = 10_000
   while (page <= maxPages) {
-    const batch = await fetchProductsPage(page, count, opts.modifiedSince)
+    const batch = await fetchProductsPage(page, count)
     for (const product of batch) yield product
     if (batch.length < count) break
     page += 1

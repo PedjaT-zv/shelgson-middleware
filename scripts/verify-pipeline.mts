@@ -1,6 +1,6 @@
 /**
  * End-to-end pipeline check via the Local API (no HTTP server needed):
- *   1. seed a few catalog items (stand-in for the DK sync)
+ *   1. read the expected prices live from DK (needs DK_API_KEY)
  *   2. create an inquiry (fires the afterChange hook -> queues processInquiry)
  *   3. run the 'inquiries' queue
  *   4. assert the quote was generated and inspect the .xlsx against the REAL
@@ -17,31 +17,23 @@ import path from 'path'
 import ExcelJS from 'exceljs'
 import { getPayload } from 'payload'
 
+import { fetchProduct } from '../src/lib/dkClient.js'
 import config from '../src/payload.config.js'
 
 const payload = await getPayload({ config })
 
-// --- 1. Seed catalog (codes exist in the template's Vörulisti; prices differ
-//        from the template's own so the DK injection is observable) ---
-const seed = [
-  { itemCode: 'H111', description: 'Legsteinn H111', unitPrice1: 175000, taxPercent: 24, currencyCode: 'ISK' },
-  { itemCode: 'BK101', description: 'Kross BK101', unitPrice1: 15000, taxPercent: 24, currencyCode: 'ISK' },
-  { itemCode: 'LK01', description: 'Lukt LK01', unitPrice1: 58000, taxPercent: 24, currencyCode: 'ISK' },
-  { itemCode: 'FK01', description: 'Dúfa FK01', unitPrice1: 37500, taxPercent: 24, currencyCode: 'ISK' },
-]
-for (const item of seed) {
-  const existing = await payload.find({
-    collection: 'catalog-items',
-    where: { itemCode: { equals: item.itemCode } },
-    limit: 1,
-  })
-  if (existing.docs[0]) {
-    await payload.update({ collection: 'catalog-items', id: existing.docs[0].id, data: { ...item, lastSyncedAt: new Date().toISOString() } })
-  } else {
-    await payload.create({ collection: 'catalog-items', data: { ...item, lastSyncedAt: new Date().toISOString() } })
+// --- 1. Expected prices straight from DK: the job must inject exactly these
+//        (codes that exist both in DK and in the template's Vörulisti) ---
+const expected: Record<string, number> = {}
+for (const code of ['H101', 'BK101', 'LK01', 'FK01']) {
+  const p = await fetchProduct(code)
+  if (!p?.UnitPrice1WithTax) {
+    console.error(`x ${code} has no VAT-inclusive price in DK — FAIL`)
+    process.exit(1)
   }
+  expected[code] = p.UnitPrice1WithTax
 }
-console.log('✔ seeded catalog items')
+console.log('✔ live DK prices (with VAT):', JSON.stringify(expected))
 
 // --- 2. Create inquiry (mirrors the client's filled example) ---
 const inquiry = await payload.create({
@@ -57,7 +49,7 @@ const inquiry = await payload.create({
       email: 'selma@example.is',
     },
     deceased: { firstName: 'Hörður', lastName: 'Kristjánsson', bornDate: '1951-04-17', diedDate: '2025-01-15' },
-    wantedProduct: { itemCode: 'H111' },
+    wantedProduct: { itemCode: 'H101' },
     inscriptionLines: [{ line: 'Minning þín lifir' }],
     options: {
       letur: 'Times New Roman',
@@ -114,7 +106,7 @@ const checks: [string, unknown, unknown][] = [
   ['C20 dates line', cell('C20'), 'f.17.04.51 d.15.01.25'],
   ['C22 inscription', cell('C22'), 'Minning þín lifir'],
   ['D29 letur', cell('D29'), 'Times New Roman'],
-  ['H29 stone code', cell('H29'), 'H111'],
+  ['H29 stone code', cell('H29'), 'H101'],
   ['I29 stone colour', cell('I29'), 'SB'],
   ['H30 per-char price', cell('H30'), 260],
   ['D31 litur', cell('D31'), 'Gull'],
@@ -144,7 +136,7 @@ console.log(`  ${isFormula(k31) ? '✔' : '✘'} K31 kross price is a formula (r
 console.log(`  ${isFormula(k54) ? '✔' : '✘'} K54 total is a formula`)
 if (!isFormula(k29) || !isFormula(k31) || !isFormula(k54)) ok = false
 
-// DK price injection into Vörulisti (template's own H111 price was 172000)
+// DK price injection into Vörulisti (template's own prices differ, e.g. H101 465000)
 const priceOf = (codeCol: string, priceCol: string, code: string, from: number, to: number) => {
   for (let r = from; r <= to; r++) {
     if (v.getCell(`${codeCol}${r}`).value === code) return v.getCell(`${priceCol}${r}`).value
@@ -152,10 +144,10 @@ const priceOf = (codeCol: string, priceCol: string, code: string, from: number, 
   return undefined
 }
 const injected: [string, unknown, number][] = [
-  ['H111 stone price', priceOf('C', 'D', 'H111', 4, 165), 175000],
-  ['BK101 kross price', priceOf('H', 'I', 'BK101', 4, 149), 15000],
-  ['LK01 lukt price', priceOf('K', 'L', 'LK01', 4, 38), 58000],
-  ['FK01 fugl price', priceOf('N', 'O', 'FK01', 4, 50), 37500],
+  ['H101 stone price', priceOf('C', 'D', 'H101', 4, 165), expected.H101],
+  ['BK101 kross price', priceOf('H', 'I', 'BK101', 4, 149), expected.BK101],
+  ['LK01 lukt price', priceOf('K', 'L', 'LK01', 4, 38), expected.LK01],
+  ['FK01 fugl price', priceOf('N', 'O', 'FK01', 4, 50), expected.FK01],
 ]
 console.log('--- Vörulisti DK price injection ---')
 for (const [label, got, want] of injected) {

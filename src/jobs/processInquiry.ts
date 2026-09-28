@@ -1,8 +1,9 @@
 import type { TaskConfig } from 'payload'
 
+import { inquiryItemCodes, loadPriceTable, quotePrice, refreshFromDk } from '../lib/catalogPrices'
 import { downloadReferenceImage } from '../lib/downloadImage'
 import { buildDesignerBrief, buildSalesQuote, type InquiryEmailData } from '../lib/emails'
-import { generateQuoteWorkbook, loadMasterTemplate, quoteFileName, type PriceRow } from '../lib/excel'
+import { generateQuoteWorkbook, loadMasterTemplate, quoteFileName } from '../lib/excel'
 import { buildQuoteData } from '../lib/quoteData'
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -10,7 +11,7 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 /**
  * The end-to-end pipeline for one inquiry, run off the queue:
  *   1. download reference images (SSRF-guarded) into `media`
- *   2. resolve the wanted product against the local DK catalog mirror
+ *   2. fetch live DK prices for the inquiry's items into the catalog mirror
  *   3. generate the Excel quote from the master template (DK prices injected)
  *   4. email the designer brief (+ images) and the salesperson quote (+ .xlsx)
  *
@@ -70,31 +71,24 @@ export const processInquiry: TaskConfig<'processInquiry'> = {
         }
       }
 
-      // --- 2. Resolve the wanted product against the DK mirror ---
-      const itemCode = (inquiry.wantedProduct as { itemCode?: string })?.itemCode ?? ''
-      const match = await payload.find({
-        collection: 'catalog-items',
-        where: { itemCode: { equals: itemCode } },
-        limit: 1,
-        depth: 0,
-        overrideAccess: true,
-      })
-      const product = match.docs[0]
-      if (!product) {
-        payload.logger.warn(`processInquiry: itemCode "${itemCode}" not found in catalog — quote will show #N/A for it`)
+      // --- 2. Live DK prices for this inquiry's items ---
+      // Best effort: if DK is unreachable the quote still goes out on the
+      // nightly mirror's prices (the admin's Accept refreshes them again).
+      const itemCode = inquiry.wantedProduct?.itemCode ?? ''
+      try {
+        const { missing } = await refreshFromDk(payload, inquiryItemCodes(inquiry))
+        if (missing.length > 0) {
+          payload.logger.warn(
+            `processInquiry: not in DK (template price used): ${missing.join(', ')}`,
+          )
+        }
+      } catch (err) {
+        payload.logger.warn(`processInquiry: live DK refresh failed, using catalog mirror: ${String(err)}`)
       }
 
-      // --- 3. Build the price table from the active, priced catalog ---
-      const priced = await payload.find({
-        collection: 'catalog-items',
-        where: { inactive: { not_equals: true } },
-        pagination: false,
-        depth: 0,
-        overrideAccess: true,
-      })
-      const prices: PriceRow[] = priced.docs
-        .filter((d) => typeof d.unitPrice1 === 'number')
-        .map((d) => ({ itemCode: d.itemCode, unitPrice: d.unitPrice1 as number }))
+      // --- 3. Price table from the active catalog; resolve the wanted product ---
+      const { prices, findItem } = await loadPriceTable(payload)
+      const product = findItem(itemCode)
 
       // --- 4. Generate the Excel quote ---
       const quoteData = buildQuoteData(inquiry)
@@ -118,7 +112,7 @@ export const processInquiry: TaskConfig<'processInquiry'> = {
             itemCode,
             catalogItem: product?.id,
             resolvedDescription: product?.description ?? undefined,
-            resolvedUnitPrice: product?.unitPrice1 ?? undefined,
+            resolvedUnitPrice: product ? quotePrice(product) : undefined,
           },
           status: 'quoted',
         },

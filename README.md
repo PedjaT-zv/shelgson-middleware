@@ -26,7 +26,7 @@ WordPress form ──POST JSON + HMAC──▶ /api/webhooks/wordpress-inquiry
                                            ▼
                                  processInquiry job:
                                    • download reference images (SSRF-guarded) → Media
-                                   • resolve itemCode against catalog-items
+                                   • live DK price fetch for the inquiry's items → catalog-items
                                    • generate Excel quote (inject DK prices, fullCalcOnLoad)
                                    • email designer brief + salesperson quote
                                    • log each email in the Sent emails collection
@@ -35,7 +35,7 @@ WordPress form ──POST JSON + HMAC──▶ /api/webhooks/wordpress-inquiry
 Admin clicks Accept ──POST /api/inquiries/:id/accept──▶ live DK price fetch
                                    → regenerate .xlsx with real prices → status accepted
 
-Nightly (03:00): syncCatalog job ──GET /Product/modified|page──▶ dkPlus ──▶ upsert catalog-items
+Nightly (03:00): syncCatalog job ──GET /Product/page──▶ dkPlus ──▶ exact mirror in catalog-items
 ```
 
 ## Accepting an inquiry (admin)
@@ -45,8 +45,7 @@ wired to `POST /api/inquiries/:id/accept` (admin auth required). Accepting:
 
 1. fetches **live prices from the DK API** for exactly the inquiry's items
    (`GET /Product/{itemcode}`, main product + add-ons) and upserts them into
-   `catalog-items` — so it works even while the nightly mirror still holds
-   placeholder data
+   `catalog-items` — so it never waits for the nightly sync
 2. regenerates the Excel quote so its price table carries the real prices
 3. marks the inquiry `accepted`, recording `acceptedAt` and `acceptedBy`
 
@@ -63,7 +62,7 @@ on accept (plug it into `src/lib/acceptInquiry.ts` after the price refresh).
 ## Local development
 
 ```bash
-corepack enable
+corepack enable        # Node ≥ 25 ships without corepack: use `npx pnpm@10 …` instead
 pnpm install
 
 # Postgres (matches DATABASE_URL below)
@@ -117,9 +116,11 @@ client ever reshuffles the template. What the generator writes:
   H34-36, Mynd H37, Rammi H38, Annað H40-49 (overflow lands in free Annað rows).
 - **Manual price cells** when provided: Blómarammi K39, Uppsetning K50,
   Afsláttur K52 (written negative).
-- **DK prices** are injected into the Vörulisti tables by matching itemCode —
-  codes DK doesn't know keep the template's own price. **Formula cells are never
-  overwritten** (K29 stone price, K54 total, per-row add-on VLOOKUPs).
+- **DK prices** (VAT-inclusive `UnitPrice1WithTax`, like the template's own) are
+  injected into the Vörulisti tables by matching itemCode case-insensitively —
+  codes DK doesn't know, or that have no price in DK, keep the template's own
+  price. **Formula cells are never overwritten** (K29 stone price, K54 total,
+  per-row add-on VLOOKUPs).
 
 The generator sets `fullCalcOnLoad`, so Excel/LibreOffice/Sheets recomputes every
 VLOOKUP **when the file is opened** — which is how the salesperson uses it.
@@ -150,10 +151,23 @@ trustworthy audit trail.
 
 ## dkPlus catalog sync
 
-`src/lib/dkClient.ts` calls the dkPlus REST API (`Authorization: bearer <DK_API_KEY>`).
-`syncCatalog` (src/jobs) pulls products (incremental via `/Product/modified/…` after
-the first full pull) and upserts `catalog-items` by `itemCode`. Scheduled daily at
-03:00 on the `nightly` queue.
+`src/lib/dkClient.ts` calls the dkPlus REST API (`Authorization: bearer <DK_API_KEY>`);
+its header lists the API behaviour verified against the live account.
+`syncCatalog` (src/jobs → `src/lib/catalogSync.ts`) pulls the **whole** catalog
+(~2k products, a few seconds), writes only rows whose DK data changed and
+**deletes rows DK doesn't have** — so `catalog-items` is an exact mirror (no
+placeholders). Scheduled daily at 03:00 on the `nightly` queue; run it on demand
+with `scripts/sync-catalog.mts`.
+
+Things worth knowing about the DK data (Sep 2026):
+
+- ItemCodes are lowercase in DK (`h101`), uppercase in the template (`H101`);
+  codes are stored lowercase and always compared through `normalizeItemCode`.
+- Only ~156 of the template's ~390 Vörulisti codes exist in DK (5 of 75 stones);
+  the rest keep the template's price.
+- DK's `CurrencyCode` is the purchase currency; sales prices are ISK.
+- `/Product/modified/{date}` filters on a stock timestamp, not `RecordModified`,
+  so it can't drive an incremental sync — hence the full pull.
 
 ## Jobs & scheduling
 
@@ -170,7 +184,7 @@ pnpm payload jobs:run --cron "* * * * *" --all-queues --handle-schedules
 ## Verification scripts
 
 ```bash
-# Full pipeline via Local API (seeds catalog, creates inquiry, runs job, checks .xlsx)
+# Full pipeline via Local API (live DK prices, creates inquiry, runs job, checks .xlsx)
 DISABLE_AUTORUN=true DESIGNER_EMAIL=d@test.local SALES_EMAIL=s@test.local \
   pnpm exec tsx scripts/verify-pipeline.mts
 
@@ -179,6 +193,9 @@ pnpm exec tsx scripts/run-jobs.mts inquiries
 
 # Smoke-test the dkPlus client (needs a real DK_API_KEY in the env)
 pnpm exec tsx scripts/dk-smoke.mts
+
+# Sync the DK catalog now (same as the nightly job)
+pnpm exec tsx scripts/sync-catalog.mts
 ```
 
 ---

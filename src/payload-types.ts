@@ -201,7 +201,7 @@ export interface Media {
 export interface CatalogItem {
   id: number;
   /**
-   * DK ItemCode / vörunúmer — the product business key.
+   * DK ItemCode / vörunúmer, stored lowercase as in DK (matched case-insensitively).
    */
   itemCode: string;
   /**
@@ -217,17 +217,23 @@ export interface CatalogItem {
    */
   unitPrice1?: number | null;
   /**
-   * VAT-inclusive unit price.
+   * VAT-inclusive unit price — the price quotes use.
    */
   unitPrice1WithTax?: number | null;
   taxPercent?: number | null;
+  /**
+   * Currency of the prices.
+   */
   currencyCode?: string | null;
   inactive?: boolean | null;
   showItemInWebShop?: boolean | null;
   /**
-   * DK RecordModified — drives incremental sync.
+   * DK RecordModified — when the product was last edited in DK.
    */
   recordModified?: string | null;
+  /**
+   * When DK data last changed this row.
+   */
   lastSyncedAt?: string | null;
   updatedAt: string;
   createdAt: string;

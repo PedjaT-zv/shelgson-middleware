@@ -3,6 +3,8 @@ import path from 'path'
 
 import ExcelJS from 'exceljs'
 
+import { normalizeItemCode } from './catalogUpsert'
+
 /**
  * Excel quote generation against the client's REAL master template
  * (src/templates/master-quote-template.xlsx — Icelandic, and it must stay
@@ -14,9 +16,10 @@ import ExcelJS from 'exceljs'
  *    VLOOKUP formulas over named ranges (STVerð, KrossarVerð, LuktirVasarVerð,
  *    FuglarVerð, MyndVerð, RammiVerð, AnnaðVerð) — we never overwrite formulas.
  *  - Sheet "Vörulisti": the code → price tables those named ranges point at.
- *    We inject current DK prices here by matching itemCode, so the template's
- *    formulas price the order from live data. Codes we don't know keep the
- *    template's own price.
+ *    We inject current DK prices (VAT-inclusive) here by matching itemCode
+ *    case-insensitively (DK stores "h101", the template "H101"), so the
+ *    template's formulas price the order from live data. Codes DK doesn't
+ *    have (most stones, as of Sep 2026) keep the template's own price.
  *  - Sheet "Sheet1": internal notes — untouched.
  *
  * ExcelJS preserves formulas but does not recalculate, so we set
@@ -149,12 +152,12 @@ export async function generateQuoteWorkbook(
   const priceWs = wb.getWorksheet(map.priceSheet)
   if (!priceWs) throw new Error(`Template is missing the "${map.priceSheet}" sheet`)
 
-  const priceByCode = new Map(prices.map((p) => [p.itemCode, p.unitPrice]))
+  const priceByCode = new Map(prices.map((p) => [normalizeItemCode(p.itemCode), p.unitPrice]))
   for (const table of map.priceTables) {
     for (let r = table.from; r <= table.to; r++) {
       const code = priceWs.getCell(`${table.codeCol}${r}`).value
       if (typeof code !== 'string') continue
-      const dkPrice = priceByCode.get(code.trim())
+      const dkPrice = priceByCode.get(normalizeItemCode(code))
       if (dkPrice === undefined) continue
       const priceCell = priceWs.getCell(`${table.priceCol}${r}`)
       if (isFormula(priceCell.value)) continue
