@@ -4,7 +4,7 @@
  *   2. create an inquiry (fires the afterChange hook -> queues processInquiry)
  *   3. run the 'inquiries' queue
  *   4. assert the quote was generated and inspect the .xlsx against the REAL
- *      Icelandic master template (sheet "Pantanir" inputs + "Vörulisti" prices)
+ *      Icelandic master template (only sheet "Pantanir": inputs + DK prices)
  *
  * Run with: DISABLE_AUTORUN=true SALES_EMAIL=... DESIGNER_EMAIL=... tsx scripts/verify-pipeline.mts
  */
@@ -22,8 +22,8 @@ import config from '../src/payload.config.js'
 
 const payload = await getPayload({ config })
 
-// --- 1. Expected prices straight from DK: the job must inject exactly these
-//        (codes that exist both in DK and in the template's Vörulisti) ---
+// --- 1. Expected prices straight from DK: the job must write exactly these
+//        next to each code on the order sheet ---
 const expected: Record<string, number> = {}
 for (const code of ['H101', 'BK101', 'LK01', 'FK01']) {
   const p = await fetchProduct(code)
@@ -93,7 +93,6 @@ const wb = new ExcelJS.Workbook()
 await wb.xlsx.load(await readFile(filePath))
 
 const q = wb.getWorksheet('Pantanir')!
-const v = wb.getWorksheet('Vörulisti')!
 
 const cell = (addr: string) => q.getCell(addr).value
 const checks: [string, unknown, unknown][] = [
@@ -117,6 +116,19 @@ const checks: [string, unknown, unknown][] = [
   ['H40 annað', cell('H40'), 'Möl+Dúk'],
   ['K50 uppsetning', cell('K50'), 86600],
   ['C34 comments', cell('C34'), 'Óska eftir uppsetningu fyrir jól'],
+  // Prices come straight from the DK catalog, written next to each code
+  ['K29 stone price (DK)', cell('K29'), expected.H101],
+  ['K31 kross price (DK)', cell('K31'), expected.BK101],
+  ['K32 lukt price (DK)', cell('K32'), expected.LK01],
+  ['K34 fugl 1 price (DK)', cell('K34'), expected.FK01],
+  ['K35 fugl 2 price (DK)', cell('K35'), expected.FK01],
+  ['K40 annað not in DK → blank', cell('K40'), null],
+  // The template is the client's filled example: what the inquiry doesn't
+  // set must come out empty, not as the example's values
+  ['K39 blómarammi (example 82000) cleared', cell('K39'), null],
+  ['E57 sölumaður (example Guðrún) cleared', cell('E57'), null],
+  ['H44 annað (example Möl+Dúk) cleared', cell('H44'), null],
+  ['K44 annað price (example 36600) cleared', cell('K44'), null],
 ]
 let ok = true
 console.log('--- Pantanir assertions ---')
@@ -126,35 +138,23 @@ for (const [label, got, want] of checks) {
   console.log(`  ${pass ? '✔' : '✘'} ${label}: ${JSON.stringify(got)}${pass ? '' : ` (expected ${JSON.stringify(want)})`}`)
 }
 
-// Price formulas must survive (never overwritten)
-const k29 = q.getCell('K29').value
-const k54 = q.getCell('K54').value
-const k31 = q.getCell('K31').value
-const isFormula = (val: unknown) => Boolean(val && typeof val === 'object' && ('formula' in (val as object) || 'sharedFormula' in (val as object)))
-console.log(`  ${isFormula(k29) ? '✔' : '✘'} K29 stone price is a formula`)
-console.log(`  ${isFormula(k31) ? '✔' : '✘'} K31 kross price is a formula (restored)`)
-console.log(`  ${isFormula(k54) ? '✔' : '✘'} K54 total is a formula`)
-if (!isFormula(k29) || !isFormula(k31) || !isFormula(k54)) ok = false
+// Total stays a formula (follows manual edits) with its computed result stored:
+// stone + Áletrun (53 letters × 260) + kross + lukt + 2 × fugl + uppsetning
+const expectedTotal = expected.H101 + 53 * 260 + expected.BK101 + expected.LK01 + 2 * expected.FK01 + 86600
+const k54 = cell('K54') as { formula?: string; result?: unknown } | null
+const totalOk = k54?.formula === 'SUM(K29:L52)' && k54.result === expectedTotal
+console.log(`  ${totalOk ? '✔' : '✘'} K54 total = SUM(K29:L52) → ${JSON.stringify(k54?.result)}${totalOk ? '' : ` (expected ${expectedTotal})`}`)
+if (!totalOk) ok = false
 
-// DK price injection into Vörulisti (template's own prices differ, e.g. H101 465000)
-const priceOf = (codeCol: string, priceCol: string, code: string, from: number, to: number) => {
-  for (let r = from; r <= to; r++) {
-    if (v.getCell(`${codeCol}${r}`).value === code) return v.getCell(`${priceCol}${r}`).value
-  }
-  return undefined
-}
-const injected: [string, unknown, number][] = [
-  ['H101 stone price', priceOf('C', 'D', 'H101', 4, 165), expected.H101],
-  ['BK101 kross price', priceOf('H', 'I', 'BK101', 4, 149), expected.BK101],
-  ['LK01 lukt price', priceOf('K', 'L', 'LK01', 4, 38), expected.LK01],
-  ['FK01 fugl price', priceOf('N', 'O', 'FK01', 4, 50), expected.FK01],
-]
-console.log('--- Vörulisti DK price injection ---')
-for (const [label, got, want] of injected) {
-  const pass = got === want
-  if (!pass) ok = false
-  console.log(`  ${pass ? '✔' : '✘'} ${label}: ${JSON.stringify(got)}${pass ? '' : ` (expected ${want})`}`)
-}
+// Only Pantanir is left; Vörulisti and everything pointing at it are gone
+const sheetNames = wb.worksheets.map((ws) => ws.name)
+const onlyOrderSheet = sheetNames.length === 1 && sheetNames[0] === 'Pantanir'
+console.log(`  ${onlyOrderSheet ? '✔' : '✘'} only the Pantanir sheet: ${JSON.stringify(sheetNames)}`)
+if (!onlyOrderSheet) ok = false
+const sheetXml = execFileSync('unzip', ['-p', filePath, 'xl/worksheets/sheet1.xml']).toString()
+const noLinks = !/Vörulisti|<dataValidation /.test(sheetXml) && wb.definedNames.model.length === 0
+console.log(`  ${noLinks ? '✔' : '✘'} no named ranges, lookups or drop-downs pointing at Vörulisti`)
+if (!noLinks) ok = false
 
 // ExcelJS does not parse calcPr back on load, so check the written XML directly.
 const workbookXml = execFileSync('unzip', ['-p', filePath, 'xl/workbook.xml']).toString()

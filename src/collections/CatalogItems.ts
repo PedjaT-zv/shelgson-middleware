@@ -4,8 +4,7 @@ import type { CollectionConfig } from 'payload'
  * A daily-synced mirror of the DK "Vörubók" product catalog, pulled from the
  * dkPlus REST API by the `syncCatalog` job (rows DK doesn't have are removed).
  * `itemCode` (DK's vörunúmer) is the business key used to resolve the product
- * an inquiry asks for, and the key DK prices are injected into the Excel
- * quote's Vörulisti price tables by.
+ * an inquiry asks for, and the key the Excel quote's prices are looked up by.
  */
 export const CatalogItems: CollectionConfig = {
   slug: 'catalog-items',

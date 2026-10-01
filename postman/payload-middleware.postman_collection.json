@@ -1,0 +1,155 @@
+{
+  "info": {
+    "name": "Payload middleware — inquiries",
+    "description": "Test toka WordPress inquiry → processInquiry job → Excel ponuda sa DK cenama.\n\nPre prvog pokretanja popuni varijable kolekcije: webhookSecret (WEBHOOK_SECRET iz .env), adminEmail, adminPassword.\n\nRedosled: 1 → 2 → sačekaj ~1 min (job radi jednom u minuti) → 3 → 4 (Send and Download) → 5.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "webhookSecret", "value": "" },
+    { "key": "adminEmail", "value": "" },
+    { "key": "adminPassword", "value": "" },
+    { "key": "token", "value": "" },
+    { "key": "inquiryId", "value": "" },
+    { "key": "quoteUrl", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Login (admin)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "if (j.token) pm.collectionVariables.set('token', j.token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": "{{baseUrl}}/api/users/login"
+      }
+    },
+    {
+      "name": "2. Create inquiry (WordPress webhook, HMAC)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Potpisuje sirovi body kao WordPress: hash_hmac('sha256', $body, WEBHOOK_SECRET) -> X-Signature",
+              "const secret = pm.collectionVariables.get('webhookSecret');",
+              "if (!secret) throw new Error('Popuni varijablu kolekcije webhookSecret (WEBHOOK_SECRET iz .env)');",
+              "const body = pm.variables.replaceIn(pm.request.body.raw);",
+              "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+              "pm.request.headers.upsert({ key: 'X-Signature', value: sig });"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const j = pm.response.json();",
+              "if (j.id) pm.collectionVariables.set('inquiryId', j.id);",
+              "console.log('inquiryId =', j.id, '— sačekaj ~1 min pa pokreni korak 3');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customer\": {\n    \"firstName\": \"Selma\",\n    \"lastName\": \"Harðardóttir\",\n    \"kennitala\": \"010160-1234\",\n    \"address\": \"Laugavegur 1, 101 Reykjavík\",\n    \"phone\": \"+354 555 1234\",\n    \"email\": \"selma@example.is\"\n  },\n  \"deceased\": {\n    \"firstName\": \"Hörður\",\n    \"lastName\": \"Kristjánsson\",\n    \"bornDate\": \"1951-04-17\",\n    \"diedDate\": \"2025-01-15\"\n  },\n  \"product\": { \"itemCode\": \"H101\" },\n  \"inscriptionLines\": [\"Minning þín lifir\"],\n  \"options\": {\n    \"letur\": \"Times New Roman\",\n    \"litur\": \"Gull\",\n    \"stoneColor\": \"SB\",\n    \"cemetery\": \"Gufunes\",\n    \"perCharPrice\": 260,\n    \"uppsetningVerd\": 86600,\n    \"comments\": \"Postman test\"\n  },\n  \"addons\": [\n    { \"type\": \"kross\", \"code\": \"BK101\", \"label\": \"Kross\", \"qty\": 1 },\n    { \"type\": \"luktVasi\", \"code\": \"LK01\", \"label\": \"Lukt\", \"qty\": 1 },\n    { \"type\": \"fugl\", \"code\": \"FK01\", \"label\": \"Dúfa\", \"qty\": 2 }\n  ],\n  \"referenceImageUrls\": []\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": "{{baseUrl}}/api/webhooks/wordpress-inquiry"
+      }
+    },
+    {
+      "name": "3. Get inquiry (status + quote URL)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const j = pm.response.json();",
+              "const wp = j.wantedProduct || {};",
+              "console.log('status:', j.status, '| proizvod:', wp.itemCode, wp.resolvedDescription, '| cena (sa PDV):', wp.resolvedUnitPrice);",
+              "if (j.processingError) console.log('processingError:', j.processingError);",
+              "pm.test('Inquiry obrađen (quoted/emailed/accepted)', () => pm.expect(['quoted', 'emailed', 'accepted']).to.include(j.status));",
+              "const q = j.generatedQuote;",
+              "pm.test('Excel ponuda generisana', () => pm.expect(q && q.url).to.be.ok);",
+              "if (q && q.url) {",
+              "  const base = pm.collectionVariables.get('baseUrl');",
+              "  pm.collectionVariables.set('quoteUrl', q.url.startsWith('http') ? q.url : base + q.url);",
+              "  console.log('quote:', q.filename);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "JWT {{token}}" }],
+        "url": "{{baseUrl}}/api/inquiries/{{inquiryId}}?depth=1"
+      }
+    },
+    {
+      "name": "4. Download quote .xlsx (Send and Download)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{quoteUrl}}",
+        "description": "Klikni strelicu pored Send → Send and Download da sačuvaš .xlsx. Otvori ga u Excel-u/Numbers-u da se VLOOKUP formule preračunaju."
+      }
+    },
+    {
+      "name": "5. Catalog prices for the test items",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const j = pm.response.json();",
+              "console.table((j.docs || []).map(d => ({ itemCode: d.itemCode, description: d.description, cenaSaPDV: d.unitPrice1WithTax })));",
+              "pm.test('Nađena sva 4 artikla', () => pm.expect(j.totalDocs).to.eql(4));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/catalog-items?where[itemCode][in]=h101,bk101,lk01,fk01&limit=50&depth=0",
+        "description": "Uporedi ove cene sa listom Vörulisti u skinutom .xlsx fajlu (H101, BK101, LK01, FK01)."
+      }
+    },
+    {
+      "name": "6. Accept inquiry (opciono — refresh DK cena + nova ponuda)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "JWT {{token}}" }],
+        "url": "{{baseUrl}}/api/inquiries/{{inquiryId}}/accept",
+        "description": "Isto kao dugme Accept u adminu: povlači žive DK cene, generiše novu ponudu, status → accepted. Ponovni accept vraća 409."
+      }
+    }
+  ]
+}

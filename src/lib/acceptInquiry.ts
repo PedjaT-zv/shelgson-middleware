@@ -41,7 +41,7 @@ export async function acceptInquiry(
     const now = new Date().toISOString()
     const { refreshed, missing } = await refreshFromDk(payload, inquiryItemCodes(inquiry))
     if (missing.length > 0) {
-      payload.logger.warn(`acceptInquiry: not in DK (template price used): ${missing.join(', ')}`)
+      payload.logger.warn(`acceptInquiry: not in DK (left unpriced in the quote): ${missing.join(', ')}`)
     }
 
     // --- 2. Rebuild the price table (now containing the live prices) ---

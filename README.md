@@ -6,8 +6,8 @@ your team acts on. It:
 1. Receives WordPress form submissions on a secured webhook endpoint.
 2. Stores them in an **Inquiries** collection (the "CPT" equivalent).
 3. Keeps a **daily-synced mirror of the DK Vörubók catalog** (with prices) in Postgres.
-4. Generates an **Excel quote** from a master template — DK prices are injected
-   into the template's price sheet, so its existing VLOOKUP formulas total the job.
+4. Generates an **Excel quote** from a master template — each item is priced
+   from the DK catalog and the template's formulas total the job.
 5. Sends **two emails**: a designer brief (customer choices + reference images) and
    a salesperson quote (the `.xlsx` attached).
 
@@ -27,7 +27,7 @@ WordPress form ──POST JSON + HMAC──▶ /api/webhooks/wordpress-inquiry
                                  processInquiry job:
                                    • download reference images (SSRF-guarded) → Media
                                    • live DK price fetch for the inquiry's items → catalog-items
-                                   • generate Excel quote (inject DK prices, fullCalcOnLoad)
+                                   • generate Excel quote (DK prices next to each code)
                                    • email designer brief + salesperson quote
                                    • log each email in the Sent emails collection
                                    • status → emailed
@@ -46,7 +46,7 @@ wired to `POST /api/inquiries/:id/accept` (admin auth required). Accepting:
 1. fetches **live prices from the DK API** for exactly the inquiry's items
    (`GET /Product/{itemcode}`, main product + add-ons) and upserts them into
    `catalog-items` — so it never waits for the nightly sync
-2. regenerates the Excel quote so its price table carries the real prices
+2. regenerates the Excel quote so it carries the real prices
 3. marks the inquiry `accepted`, recording `acceptedAt` and `acceptedBy`
 
 Allowed from statuses quoted / emailed / failed; re-accepting an accepted
@@ -98,9 +98,16 @@ See `.env.example`. Key ones:
 ## The master Excel template (client's real file, Icelandic)
 
 `src/templates/master-quote-template.xlsx` is the client's real order template
-(sheets **Pantanir** = the order form, **Vörulisti** = the code → price tables its
-VLOOKUP named ranges read, `Sheet1` = internal notes, untouched). All labels stay
-Icelandic; the generator only writes values into input cells.
+(sheets **Pantanir** = the order form, **Vörulisti** = the template's own code →
+price lists, `Sheet1` = internal notes). All labels stay Icelandic; the generator
+only writes values into input and price cells.
+
+The quote is **only the Pantanir sheet**, and prices come **only from the DK
+catalog**: Vörulisti and Sheet1 are dropped, together with every named range,
+VLOOKUP and drop-down list that pointed at Vörulisti. The saved
+template is the client's *filled* example (Selma, Guðrún, Blómarammi 82 000, …),
+so all input and price cells are cleared first — nothing from the example leaks
+into a quote.
 
 The cell map lives in **`src/lib/excel.ts` → `TEMPLATE_MAP`** — re-align it if the
 client ever reshuffles the template. What the generator writes:
@@ -116,15 +123,16 @@ client ever reshuffles the template. What the generator writes:
   H34-36, Mynd H37, Rammi H38, Annað H40-49 (overflow lands in free Annað rows).
 - **Manual price cells** when provided: Blómarammi K39, Uppsetning K50,
   Afsláttur K52 (written negative).
-- **DK prices** (VAT-inclusive `UnitPrice1WithTax`, like the template's own) are
-  injected into the Vörulisti tables by matching itemCode case-insensitively —
-  codes DK doesn't know, or that have no price in DK, keep the template's own
-  price. **Formula cells are never overwritten** (K29 stone price, K54 total,
-  per-row add-on VLOOKUPs).
+- **DK prices** (VAT-inclusive `UnitPrice1WithTax`) are written as plain values
+  into column K next to each code — stone K29, add-ons K31-K49 — matching
+  itemCode case-insensitively. Codes DK doesn't know, or that have no price in
+  DK, are **left blank** for the salesperson.
+- The template's remaining formulas stay, so the total follows manual edits:
+  letter count (D30), Áletrun price K30 = D30 × H30, total K54 = SUM(K29:L52).
 
-The generator sets `fullCalcOnLoad`, so Excel/LibreOffice/Sheets recomputes every
-VLOOKUP **when the file is opened** — which is how the salesperson uses it.
-(A preview that doesn't "open" the file, e.g. Quick Look, shows stale values.)
+The generator sets `fullCalcOnLoad`, so Excel/Numbers/LibreOffice recompute those
+formulas when the file is opened, and it also stores their computed results, so
+previews that don't recalculate (Quick Look, mail apps) show the same numbers.
 
 ---
 
@@ -164,7 +172,7 @@ Things worth knowing about the DK data (Sep 2026):
 - ItemCodes are lowercase in DK (`h101`), uppercase in the template (`H101`);
   codes are stored lowercase and always compared through `normalizeItemCode`.
 - Only ~156 of the template's ~390 Vörulisti codes exist in DK (5 of 75 stones);
-  the rest keep the template's price.
+  the rest come out unpriced in quotes until they are added to DK.
 - DK's `CurrencyCode` is the purchase currency; sales prices are ISK.
 - `/Product/modified/{date}` filters on a stock timestamp, not `RecordModified`,
   so it can't drive an incremental sync — hence the full pull.

@@ -39,9 +39,8 @@ export async function refreshFromDk(
 }
 
 /**
- * The price a quote uses for a catalog row: DK's VAT-inclusive UnitPrice1WithTax,
- * matching the template's Vörulisti (its prices are VAT-inclusive too).
- * Zero means "no price set in DK" — undefined, so the template keeps its own.
+ * The price a quote uses for a catalog row: DK's VAT-inclusive UnitPrice1WithTax.
+ * Zero means "no price set in DK" — undefined, so the quote leaves it blank.
  */
 export function quotePrice(item: Pick<CatalogItem, 'unitPrice1WithTax'>): number | undefined {
   const p = item.unitPrice1WithTax

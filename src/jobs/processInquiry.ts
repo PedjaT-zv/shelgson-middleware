@@ -79,7 +79,7 @@ export const processInquiry: TaskConfig<'processInquiry'> = {
         const { missing } = await refreshFromDk(payload, inquiryItemCodes(inquiry))
         if (missing.length > 0) {
           payload.logger.warn(
-            `processInquiry: not in DK (template price used): ${missing.join(', ')}`,
+            `processInquiry: not in DK (left unpriced in the quote): ${missing.join(', ')}`,
           )
         }
       } catch (err) {
